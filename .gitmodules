@@ -1,0 +1,3 @@
+[submodule "libriichi"]
+	path = libriichi
+	url = https://github.com/ashleney/libriichi.git

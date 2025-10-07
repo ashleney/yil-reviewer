@@ -1,0 +1,9 @@
+debug
+target
+**/*.rs.bk
+*.pdb
+.vscode
+
+downloads
+playwright_data
+downloadlogs/config.py
