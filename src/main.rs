@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use anyhow::{bail, Context, Result};
 use csv::Writer;
-use riichi::algo::danger::determine_safe_tiles;
 use riichi::convlog::tenhou::{EndStatus, Log};
 use riichi::mjai::Event;
 use riichi::must_tile;
@@ -96,11 +95,11 @@ fn main() -> Result<()> {
         if !path.is_file() {
             continue;
         }
-        println!("Processing: {:?}", path);
+        println!("Processing: {path:?}");
 
-        let json_string = std::fs::read_to_string(&path).with_context(|| format!("failed to read file {:?}", path))?;
+        let json_string = std::fs::read_to_string(&path).with_context(|| format!("failed to read file {path:?}"))?;
         let log = Log::from_json_str(&json_string)?;
-        
+
         let json_value: serde_json::Value = serde_json::from_str(&json_string)?;
         let duration = if let Some(mjshead) = json_value.get("mjshead") {
             let start_time = mjshead.get("start_time").context("no mjshead.start_time")?.as_u64().unwrap();
@@ -122,7 +121,7 @@ fn main() -> Result<()> {
                             let Some((yaku_name, yaku_count)) = yaku.split_once('(') else {
                                 bail!("invalid tenhou yaku name");
                             };
-                            if yaku_name == "Ura Dora" && yaku_count.chars().next() == Some('0') {
+                            if yaku_name == "Ura Dora" && yaku_count.starts_with('0') {
                                 continue;
                             }
                             *collected_yaku.entry(yaku_name.to_owned()).or_default() += 1;
@@ -134,7 +133,7 @@ fn main() -> Result<()> {
         }
 
         for player_id in 0..4 {
-            let name = log.names[player_id as usize].clone();
+            let name = log.names[player_id].clone();
             let info = players_info.entry(name.clone()).or_default();
 
             if let Some(duration) = duration {
@@ -144,6 +143,12 @@ fn main() -> Result<()> {
             let mut state = PlayerState::new(player_id as u8);
 
             for event in &events {
+                let danger_before_event = if matches!(event, Event::Dahai { actor, .. } if *actor == player_id as u8) {
+                    // this is very slow and needs to be optimized
+                    state.calculate_danger().map(|d| d.tile_weights)
+                } else {
+                    [[0.; 34]; 4]
+                };
                 state.update(event)?;
                 if duration.is_some() {
                     info.action_count += state.last_cans.can_act() as u32;
@@ -159,18 +164,16 @@ fn main() -> Result<()> {
                             .waits
                             .iter()
                             .enumerate()
-                            .filter_map(|(tile, is_wait)| is_wait.then(|| 4 - state.tiles_seen[tile] as u32))
+                            .filter(|&(_, &is_wait)| is_wait)
+                            .map(|(tile, _)| 4 - state.tiles_seen[tile] as u32)
                             .sum::<u32>();
                     }
                     Event::Dahai { actor, pai, .. } if *actor == player_id as u8 => {
-                        let mut pre_dahai_kawa = state.kawa.clone();
-                        pre_dahai_kawa[0].pop();
-                        let safe_tiles = determine_safe_tiles(&pre_dahai_kawa);
-                        for riichi_player in 1..=3 {
-                            let is_ippatsu = state.kawa[riichi_player]
+                        for (player_kawa, player_danger) in state.kawa.iter().zip(danger_before_event).skip(1) {
+                            let is_ippatsu = player_kawa
                                 .last()
                                 .is_some_and(|item| item.as_ref().is_some_and(|item| item.sutehai.is_riichi));
-                            if is_ippatsu && !state.self_riichi_accepted() && safe_tiles[riichi_player][pai.deaka().as_usize()] {
+                            if is_ippatsu && !state.self_riichi_accepted() && player_danger[pai.deaka().as_usize()] > 0. {
                                 info.ippatsu_brazen_count += 1;
                             }
                         }
@@ -183,8 +186,8 @@ fn main() -> Result<()> {
                     } => {
                         let Some(deltas) = deltas else { bail!("missing deltas") };
 
-                        
-                        let mut normalized_self_delta = deltas[player_id] - state.honba as i32 * 300 - state.kyotaku as i32 * 1000;
+                        let mut normalized_self_delta =
+                            deltas[player_id] - state.honba as i32 * 300 - state.kyotaku as i32 * 1000;
                         if state.is_oya() {
                             normalized_self_delta = normalized_self_delta * 2 / 3;
                         }
@@ -230,7 +233,8 @@ fn main() -> Result<()> {
                                 .waits
                                 .iter()
                                 .enumerate()
-                                .filter_map(|(tile, is_wait)| is_wait.then(|| 4 - state.tiles_seen[tile] as u32))
+                                .filter(|&(_, &is_wait)| is_wait)
+                                .map(|(tile, _)| 4 - state.tiles_seen[tile] as u32)
                                 .sum::<u32>();
                         } else if *target == player_id as u8 {
                             info.dealin_count += 1;
@@ -247,7 +251,6 @@ fn main() -> Result<()> {
                                     info.dama_mangan_dealin_count += 1;
                                 }
                             }
-                            
                         }
                     }
                     Event::EndKyoku => {
@@ -259,7 +262,8 @@ fn main() -> Result<()> {
                                 .waits
                                 .iter()
                                 .enumerate()
-                                .filter_map(|(tile, is_wait)| is_wait.then(|| must_tile!(tile)))
+                                .filter(|&(_, &is_wait)| is_wait)
+                                .map(|(tile, _)| must_tile!(tile))
                                 .collect::<Vec<_>>();
                             let has_yakuman_chance = waits.into_iter().any(|winning_tile| {
                                 let Ok(Some(agari)) = state.calculate_agari(winning_tile, false, &[]) else {
