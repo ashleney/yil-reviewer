@@ -7,3 +7,4 @@ target
 downloads
 playwright_data
 downloadlogs/config.py
+__pycache__

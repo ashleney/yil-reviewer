@@ -293,7 +293,7 @@ fn main() -> Result<()> {
         .into_iter()
         .filter(|(name, info)| info.kyoku_count > 100 && !name.contains("ashlen"))
         .collect();
-    entries.sort_by(|(_, l), (_, r)| r.kyoku_count.cmp(&l.kyoku_count));
+    entries.sort_by(|(lname, l), (rname, r)| r.kyoku_count.cmp(&l.kyoku_count).then(lname.cmp(rname)));
     let name_order = entries.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
     for (name, info) in entries {
         let row: Vec<String> = std::iter::once(name).chain(info.to_csv_values()).collect();
